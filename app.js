@@ -11,12 +11,13 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const clone = o => JSON.parse(JSON.stringify(o));
 const norm = s => String(s || "").trim().toLowerCase();
 const CATS = ["Fridge", "Freezer", "Cupboard", "Staples"];
-const DEF = {pantry: [], groceries: [], favs: [], history: [], suggestions: [],
+const SYNC_KEY = "my-kitchen-sync", GIST_FILE = "my-kitchen.json", GH = "https://api.github.com";
+const DEF = {updatedAt: 0, pantry: [], groceries: [], favs: [], history: [], suggestions: [],
   profile: {likes: "", dislikes: "", diet: "", equipment: "", time: 30, servings: 1, lang: "English"}};
 const merge = d => {
   const p = clone(DEF);
   if (!d || typeof d !== "object") return p;
-  for (const k of Object.keys(p)) if (d[k] != null) p[k] = k === "profile" ? {...p.profile, ...d.profile} : (Array.isArray(d[k]) ? d[k] : p[k]);
+  for (const k of Object.keys(p)) if (d[k] != null) p[k] = k === "profile" ? {...p.profile, ...d.profile} : k === "updatedAt" ? (+d[k] || 0) : (Array.isArray(d[k]) ? d[k] : p[k]);
   return p;
 };
 
@@ -27,10 +28,64 @@ const ls = {
 };
 let S = merge(JSON.parse(ls.get(STORE_KEY) || "null"));
 let apiKey = ls.get(KEY_KEY) || "";
-let tab = "cook", openId = null, cookId = null, rating = 0, busy = false, scan = null, toastT = null, crave = "", strict = false, pasteOpen = false;
+let tab = "cook", openId = null, cookId = null, rating = 0, busy = false, scan = null, toastT = null, crave = "", strict = false;
 try { const h = location.hash.slice(1); if (["cook", "pantry", "groceries", "me"].includes(h)) tab = h; } catch (e) {}
 
-function save() { if (!ls.set(STORE_KEY, JSON.stringify(S))) $("#sync").textContent = "Couldn't save in this browser"; }
+function save() { S.updatedAt = Date.now(); if (!ls.set(STORE_KEY, JSON.stringify(S))) setSync("Couldn't save in this browser"); schedulePush(); }
+const setSync = t => { $("#sync").textContent = t; };
+
+// ---------- Sync between devices (a secret GitHub gist, read and written with your token) ----------
+let sync = JSON.parse(ls.get(SYNC_KEY) || "null"); // {token, gistId}
+let pushT = null, pushing = false, pushAgain = false, pulling = false, dirty = false;
+async function gh(path, opts = {}) {
+  const res = await fetch(GH + path, {...opts, headers: {"Accept": "application/vnd.github+json", "Authorization": "Bearer " + sync.token, ...(opts.body ? {"Content-Type": "application/json"} : {})}});
+  if (!res.ok) throw {code: res.status === 401 ? "bad_token" : res.status === 404 ? "no_gist" : "http", status: res.status};
+  return res.json();
+}
+const gistBody = () => JSON.stringify({files: {[GIST_FILE]: {content: JSON.stringify(S)}}});
+async function readGist(g) {
+  const f = g.files && g.files[GIST_FILE]; if (!f) return null;
+  const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+  return merge(JSON.parse(text));
+}
+function schedulePush() { if (!sync) return; dirty = true; clearTimeout(pushT); setSync("Saving…"); pushT = setTimeout(push, 1200); }
+async function push() {
+  if (!sync) return; if (pushing) { pushAgain = true; return; }
+  pushing = true; dirty = false; clearTimeout(pushT);
+  try { await gh("/gists/" + sync.gistId, {method: "PATCH", body: gistBody()}); setSync("Synced"); }
+  catch (e) { dirty = true; setSync(e.code === "bad_token" ? "Sync stopped: token refused (see Me tab)" : "Not synced yet, saved on this device"); }
+  pushing = false; if (pushAgain) { pushAgain = false; push(); }
+}
+async function pull() { // take the other device's data if it is newer
+  if (!sync || pulling || pushing) return;
+  if (dirty) { push(); return; } // send unsynced changes from this device first
+  pulling = true; setSync("Syncing…");
+  try {
+    const remote = await readGist(await gh("/gists/" + sync.gistId));
+    if (remote && remote.updatedAt > S.updatedAt) { S = remote; ls.set(STORE_KEY, JSON.stringify(S)); openId = cookId = null; render(); }
+    else if (!remote || remote.updatedAt < S.updatedAt) await push();
+    setSync("Synced");
+  } catch (e) { setSync(e.code === "bad_token" ? "Sync stopped: token refused (see Me tab)" : "Offline, saved on this device"); }
+  pulling = false;
+}
+async function connectSync(token) {
+  sync = {token, gistId: null};
+  try {
+    const gists = await gh("/gists?per_page=100");
+    const found = gists.find(g => g.files && g.files[GIST_FILE]);
+    if (found) {
+      sync.gistId = found.id;
+      const remote = await readGist(await gh("/gists/" + found.id));
+      if (remote && remote.updatedAt >= S.updatedAt) S = remote; // the existing synced data wins on a newly linked device
+    } else {
+      if (!S.updatedAt) S.updatedAt = Date.now();
+      sync.gistId = (await gh("/gists", {method: "POST", body: JSON.stringify({description: "My Kitchen data (synced by the app)", public: false, files: {[GIST_FILE]: {content: JSON.stringify(S)}}})})).id;
+    }
+    ls.set(SYNC_KEY, JSON.stringify(sync)); ls.set(STORE_KEY, JSON.stringify(S));
+    await push(); toast(found ? "Linked. Showing your synced kitchen" : "Sync is on. Now link your other device");
+  } catch (e) { sync = null; toast(e.code === "bad_token" ? "GitHub refused that token" : "Couldn’t reach GitHub, try again"); }
+  render();
+}
 function toast(msg, acts = []) {
   const t = $("#toast"); t.textContent = "";
   const s = document.createElement("span"); s.textContent = msg; t.append(s);
@@ -154,8 +209,15 @@ function vMe() {
   <p class="hint">The key is stored only in this browser and sent only to Anthropic. It is never included in exports.</p>
   ${apiKey ? `<div class="key"><span>Key saved (…${esc(apiKey.slice(-4))})</span><button class="sec" data-a="delkey">Remove key</button></div>`
     : `<form class="key" id="keyform"><input type="password" name="k" placeholder="sk-ant-…" autocomplete="off" aria-label="API key"><button class="go">Save key</button></form>`}</div>
-  <h2>Move to another device</h2>
-  <p class="hint">Data lives in this browser. Export a backup file and import it on your other device.</p>
+  <h2>Sync phone and laptop</h2>
+  <div class="box">${sync ? `<p><b>Sync is on.</b> Your kitchen is saved to a secret gist on your GitHub and updates when you open the app on either device.</p>
+    <div class="acts"><button class="sec" data-a="syncnow">Sync now</button><button class="sec" data-a="unsync">Turn off on this device</button></div>`
+  : `<p>Keep the same pantry and lists on every device. Do this once on each device:</p>
+    <ol class="steps"><li>Create a GitHub token with only the <b>gist</b> permission: <a href="https://github.com/settings/tokens/new?scopes=gist&description=My%20Kitchen" target="_blank" rel="noopener">open the token page</a>, set the expiration you like, then Generate token.</li><li>Paste it below. On the second device, paste the same token (or a new one).</li></ol>
+    <form class="key" id="syncform"><input type="password" name="k" placeholder="ghp_…" autocomplete="off" aria-label="GitHub token"><button class="go">Turn on sync</button></form>
+    <p class="hint">The token stays in this browser and is only sent to GitHub. Your data goes in a secret gist that only you can see in your list of gists.</p>`}</div>
+  <h2>Backup</h2>
+  <p class="hint">Download a copy of everything, or restore one.</p>
   <div class="acts"><button class="sec" data-a="export">Export backup</button><label class="sec scan" style="margin:0">Import backup<input type="file" accept=".json,application/json" id="importf" hidden></label></div>
   <h2>Cooked lately</h2>${S.history.length ? `<ul class="list">${S.history.map(h => `<li class="row" data-id="${h.id}"><div class="nm"><b>${esc(h.title)}</b><div class="meta">${esc(h.date)}${h.rating > 0 ? " · loved it" : h.rating < 0 ? " · not again" : ""}</div></div><button class="x" data-a="hdel" aria-label="Remove">×</button></li>`).join("")}</ul>` : '<p class="hint">Dishes you mark as cooked show up here, and your ratings shape future ideas.</p>'}`;
 }
@@ -297,6 +359,8 @@ function act(a, b, id, rid) {
   case "scanadd": { const show = undoable("Added to your pantry"); scan.items.filter(i => i.on).forEach(addPantry); scan = null; show(); break; }
   case "scancancel": scan = null; break;
   case "delkey": apiKey = ""; ls.set(KEY_KEY, null); break;
+  case "syncnow": pull(); return;
+  case "unsync": sync = null; ls.set(SYNC_KEY, null); setSync("Saved in this browser"); render(); return;
   case "export": {
     const a2 = document.createElement("a");
     a2.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], {type: "application/json"}));
@@ -316,6 +380,7 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("submit", e => {
   e.preventDefault();
+  if (e.target.id === "syncform") { const k = e.target.k.value.trim(); if (!k) return; setSync("Connecting…"); connectSync(k); return; }
   if (e.target.id === "keyform") { const k = e.target.k.value.trim(); if (!k) return; apiKey = k; ls.set(KEY_KEY, k); toast("Key saved in this browser"); render(); return; }
   const f = e.target.closest("form.add"); if (!f) return;
   const parts = f.t.value.split(/[;\n]|,(?!\d)/).map(s => s.trim()).filter(Boolean); if (!parts.length) return;
@@ -341,4 +406,6 @@ document.addEventListener("input", e => {
 });
 
 render();
+if (sync) pull();
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pull(); else if (dirty) push(); });
 }

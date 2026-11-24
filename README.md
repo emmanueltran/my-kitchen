@@ -11,6 +11,7 @@ A small web app to know what's in my kitchen and decide what to cook: a pantry, 
 - **Recipe ideas**: choose how much time you have and an optional craving, and Claude suggests 3 dishes based on the pantry, your tastes, your equipment and your past ratings.
 - **"I cooked this"**: removes the ingredients used from the pantry (amounts can be adjusted), and logs the dish with a rating ("Loved it", "Not again") that shapes later suggestions.
 - **Photo scan**: a photo of the fridge or a receipt fills the pantry (needs an API key).
+- **Sync between phone and laptop** through a secret gist on your own GitHub account.
 - **Favourites, undo, English or French recipes**, mobile layout and automatic dark mode.
 
 ## How Claude is used
@@ -30,7 +31,15 @@ In both cases Claude returns structured JSON (title, time, ingredients linked to
 └── app.js       # logic: pantry, groceries, prompts, Claude calls, storage
 ```
 
-HTML, CSS and JavaScript, with no framework or build step. Data is saved in the browser (`localStorage`); the *Me* tab exports and imports a backup file to move it to another device. Hosted for free on GitHub Pages.
+HTML, CSS and JavaScript, with no framework or build step. Hosted for free on GitHub Pages.
+
+### Where data is saved
+
+- **In the browser** (`localStorage`), after every change, so the app works offline and without any account.
+- **Optionally in a secret GitHub gist**, to see the same kitchen on several devices. In the *Me* tab, paste a GitHub token that only has the `gist` permission. The app finds or creates a gist named `my-kitchen.json`, saves to it shortly after each change, and reloads it when the app comes back to the foreground. The most recent version wins. GitHub keeps every revision of the gist, so older states can be recovered.
+- **Backups**: the *Me* tab can export and import everything as a JSON file.
+
+Tokens and API keys stay in the browser where they were entered and are never written to the gist or to backups.
 
 ## Run locally
 
