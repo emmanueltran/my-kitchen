@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Kitchen</title>
+  <meta name="description" content="Track what's in your pantry, keep a grocery list, and get recipe ideas from what you already have.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23f4b93a'/><circle cx='50' cy='50' r='26' fill='%23d23f27'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="in">
+      <h1>My Kitchen</h1>
+      <p class="sub"><span id="stats"></span><span id="sync">Saved in this browser</span></p>
+    </div>
+  </header>
+  <nav class="tabs">
+    <div class="in">
+      <button data-t="cook">Cook</button>
+      <button data-t="pantry">Pantry<i id="cp">0</i></button>
+      <button data-t="groceries">Groceries<i id="cg">0</i></button>
+      <button data-t="me">Me</button>
+    </div>
+  </nav>
+  <main id="view"></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
